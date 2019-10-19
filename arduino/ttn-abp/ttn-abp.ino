@@ -1,3 +1,6 @@
+#include <CayenneLPP.h>
+#include <LowPower.h>
+
 /*******************************************************************************
  * Copyright (c) 2015 Thomas Telkamp and Matthijs Kooijman
  * Copyright (c) 2018 Terry Moore, MCCI
@@ -54,16 +57,16 @@
 
 // LoRaWAN NwkSKey, network session key
 // This should be in big-endian (aka msb).
-static const PROGMEM u1_t NWKSKEY[16] = { FILLMEIN };
+static const PROGMEM u1_t NWKSKEY[16] = { "CEF88DCE18127D97CEE07E39B89AF3CF" };
 
 // LoRaWAN AppSKey, application session key
 // This should also be in big-endian (aka msb).
-static const u1_t PROGMEM APPSKEY[16] = { FILLMEIN };
+static const u1_t PROGMEM APPSKEY[16] = { "CD8173EF3DB8162E39CD6486038FA3EA" };
 
 // LoRaWAN end-device address (DevAddr)
 // See http://thethingsnetwork.org/wiki/AddressSpace
 // The library converts the address to network byte order as needed, so this should be in big-endian (aka msb) too.
-static const u4_t DEVADDR = FILLMEIN ; // <-- Change this address for every node!
+static const u4_t DEVADDR = "260117CF" ; // <-- Change this address for every node!
 
 // These callbacks are only used in over-the-air activation, so they are
 // left empty here (we cannot leave them out completely unless
@@ -83,13 +86,25 @@ const unsigned TX_INTERVAL = 60;
 // Pin mapping
 // Adapted for Feather M0 per p.10 of [feather]
 const lmic_pinmap lmic_pins = {
-    .nss = 8,                       // chip select on feather (rf95module) CS
+    .nss = 10,                       // chip select on feather (rf95module) CS
     .rxtx = LMIC_UNUSED_PIN,
-    .rst = 4,                       // reset pin
-    .dio = {6, 5, LMIC_UNUSED_PIN}, // assumes external jumpers [feather_lora_jumper]
+    .rst = 9,                       // reset pin
+    .dio = {2, 7, LMIC_UNUSED_PIN}, // assumes external jumpers [feather_lora_jumper]
                                     // DIO1 is on JP1-1: is io1 - we connect to GPO6
                                     // DIO1 is on JP5-3: is D2 - we connect to GPO5
 };
+
+long readVcc() {
+  ADMUX = _BV(REFS0) | _BV(MUX3) | _BV(MUX2) |
+  _BV(MUX1);
+  delay(2);
+  ADCSRA |= _BV(ADSC);
+  while (bit_is_set(ADCSRA, ADSC));
+  long result = ADCL;
+  result |= ADCH << 8;
+  result = 1126400L / result; // Back-calculate AVcc in mV
+  return result;
+}
 
 void onEvent (ev_t ev) {
     Serial.print(os_getTime());
@@ -137,7 +152,13 @@ void onEvent (ev_t ev) {
               Serial.println(F(" bytes of payload"));
             }
             // Schedule next transmission
-            os_setTimedCallback(&sendjob, os_getTime()+sec2osticks(TX_INTERVAL), do_send);
+            //os_setTimedCallback(&sendjob, os_getTime()+sec2osticks(TX_INTERVAL), do_send);
+            Serial.println("Me voy a chear una siestecita");
+            delay(1000); // To allow serial buffer to clear
+            for (byte counter = 0; counter < 3; counter++) {
+              LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);  
+            }
+            os_setCallback(&sendjob, do_send);
             break;
         case EV_LOST_TSYNC:
             Serial.println(F("EV_LOST_TSYNC"));
@@ -179,7 +200,10 @@ void do_send(osjob_t* j){
         Serial.println(F("OP_TXRXPEND, not sending"));
     } else {
         // Prepare upstream data transmission at the next possible time.
-        LMIC_setTxData2(1, mydata, sizeof(mydata)-1, 0);
+        lpp.reset();
+        lpp.addAnalogInput(1,readVcc() / 1000.F);
+        //LMIC_setTxData2(1, mydata, sizeof(mydata)-1, 0);
+        LMIC_setTxData2(1,lpp.getBuffer(), lpp.getSize(), 0);
         Serial.println(F("Packet queued"));
     }
     // Next TX is scheduled after TX_COMPLETE event.
